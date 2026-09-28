@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>球堆放编辑器 · 合成球球</title>
+<style>
+  :root { color-scheme:light; --ink:#39334f; --muted:#928ba4; --pink:#ff7399; --paper:#fff9f1; --line:#efe6eb; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:16px; background:var(--paper); color:var(--ink);
+         font:14px/1.6 "Microsoft YaHei",system-ui,-apple-system,"Segoe UI",sans-serif; }
+  h1 { margin:0 0 4px; font-size:19px; }
+  .sub { margin:0 0 14px; color:var(--muted); font-size:12px; }
+  .wrap { display:flex; gap:16px; align-items:flex-start; flex-wrap:wrap; }
+  .panel { flex:1 1 300px; min-width:280px; max-width:420px; display:flex; flex-direction:column; gap:12px; }
+  .card { border:1px solid var(--line); border-radius:16px; background:#fff; padding:12px 13px; }
+  .card h2 { margin:0 0 9px; font-size:13px; color:#6d647f; }
+  .sizeRow { display:flex; align-items:center; gap:10px; }
+  .sizeRow input[type=range] { flex:1; accent-color:var(--pink); }
+  .sizeRow input[type=number] { width:74px; height:32px; padding:0 8px; border:1px solid var(--line); border-radius:9px; font:inherit; color:var(--ink); }
+  .palette { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; }
+  .ball-btn { display:flex; flex-direction:column; align-items:center; gap:2px; padding:6px 4px; border:1px solid var(--line);
+              border-radius:12px; background:#fff; cursor:pointer; font:inherit; color:var(--ink); }
+  .ball-btn canvas { display:block; }
+  .ball-btn b { font-size:11px; font-weight:800; }
+  .ball-btn i { font-size:10px; color:var(--muted); font-style:normal; }
+  .ball-btn.selected { border-color:var(--pink); background:#fff2f6; box-shadow:0 0 0 1px var(--pink) inset; }
+  .actions { display:grid; grid-template-columns:1fr 1fr; gap:7px; }
+  .actions button { min-height:38px; border-radius:11px; font:inherit; font-size:13px; font-weight:800; cursor:pointer; border:1px solid var(--line); background:#fff; color:#6d647f; }
+  .actions button.primary { border:0; color:#fff; background:linear-gradient(135deg,#ff9eae,#fa6b99); }
+  .actions button.wide { grid-column:1 / -1; }
+  .state { margin:9px 2px 0; color:#6d647f; font-size:12px; }
+  .hint { margin:7px 2px 0; color:var(--muted); font-size:11px; line-height:1.7; }
+  .stage { flex:0 0 auto; display:flex; flex-direction:column; align-items:center; gap:8px; }
+  canvas#stage { display:block; touch-action:none; cursor:crosshair; border-radius:10px; }
+</style>
+</head>
+<body>
+<h1>球堆放编辑器</h1>
+<p class="sub">合成球球 · 默认方案 —— 自定义容器宽高、选择等级、点击放置。渲染代码取自游戏本体，与游戏内观感一致。</p>
+<div class="wrap">
+  <div class="panel">
+    <div class="card">
+      <h2>容器大小（宽 × 高）</h2>
+      <div class="sizeRow">
+        <span style="width:16px;color:#6d647f;font-size:12px;font-weight:800">宽</span>
+        <input id="size-range-w" type="range" min="240" max="1200" step="10" value="620">
+        <input id="size-number-w" type="number" min="240" max="1200" step="10" value="620">
+        <span style="color:#928ba4;font-size:12px">px</span>
+      </div>
+      <div class="sizeRow">
+        <span style="width:16px;color:#6d647f;font-size:12px;font-weight:800">高</span>
+        <input id="size-range-h" type="range" min="240" max="1200" step="10" value="620">
+        <input id="size-number-h" type="number" min="240" max="1200" step="10" value="620">
+        <span style="color:#928ba4;font-size:12px">px</span>
+      </div>
+      <p class="hint">改大小会保留已放置的球（超出边界的会被夹回容器内）。</p>
+    </div>
+    <div class="card">
+      <h2>选择球的等级</h2>
+      <div class="palette" id="palette"></div>
+      <p class="state" id="state">已放置 0 颗 ｜ 填充率 0%</p>
+    </div>
+    <div class="card">
+      <h2>操作</h2>
+      <div class="actions">
+        <button type="button" id="btn-random" class="primary wide">随机堆放填满</button>
+        <button type="button" id="btn-undo">撤销上一颗</button>
+        <button type="button" id="btn-clear">清空</button>
+        <button type="button" id="btn-export" class="primary wide">导出 PNG</button>
+      </div>
+      <p class="hint">在容器内<b>点击</b>放置选中的球 ｜ <b>拖动</b>可移动已放置的球 ｜ <b>右键</b>删除指针下的球。</p>
+    </div>
+  </div>
+  <div class="stage">
+    <canvas id="stage"></canvas>
+  </div>
+</div>
+<script>
+'use strict';
+
+/* ===== 以下渲染代码由构建脚本从游戏 index.html 原样抽取 ===== */
+const BALL_TYPES = [
+      { name:'莓莓', color:'#ff8da8', light:'#ffd2d9', emoji:'✿' },
+      { name:'柠檬', color:'#ffc956', light:'#ffe9a5', emoji:'✦' },
+      { name:'薄荷', color:'#74d9bd', light:'#c9f5e4', emoji:'♥' },
+      { name:'天空', color:'#72b7f5', light:'#cce8ff', emoji:'✧' },
+      { name:'葡萄', color:'#a991ef', light:'#ddd2ff', emoji:'✿' },
+      { name:'桃桃', color:'#ff9d72', light:'#ffdec8', emoji:'♥' },
+      { name:'棉花糖', color:'#ed83cf', light:'#ffd5f3', emoji:'✦' },
+      { name:'星星糖', color:'#6ecbd1', light:'#c8f1f1', emoji:'★' },
+      { name:'彩虹糖', color:'#ff6f91', light:'#ffe0a7', emoji:'✧' },
+      { name:'月亮', color:'#ffd56c', light:'#fff5bf', emoji:'☾' },
+      { name:'雪花', color:'#79c9e8', light:'#d4f2ff', emoji:'❄' },
+      { name:'樱花', color:'#f58eb5', light:'#ffd9e7', emoji:'❀' },
+      { name:'极光', color:'#56c6b2', light:'#c7f5e9', emoji:'✧' },
+      { name:'玫瑰', color:'#e96986', light:'#ffc7d3', emoji:'♥' },
+      { name:'向日葵', color:'#f2bd43', light:'#fff0ae', emoji:'❁' }
+    ];
+const radiusFor=level=>19+level*6;
+const DEFAULT_CUSTOMIZATIONS={6:{name:'棉花'},7:{name:'星星'},8:{name:'彩虹'}};
+function withDefaultCustomizations(source={}){const result=JSON.parse(JSON.stringify(DEFAULT_CUSTOMIZATIONS));Object.entries(source||{}).forEach(([key,value])=>{result[key]={...(result[key]||{}),...(value||{})};});return result;}
+function shade(hex,amt){const n=parseInt(hex.slice(1),16),r=Math.max(0,Math.min(255,(n>>16)+amt)),g=Math.max(0,Math.min(255,((n>>8)&255)+amt)),b=Math.max(0,Math.min(255,(n&255)+amt));return `rgb(${r},${g},${b})`;}
+function mixColor(hex,amount){const n=parseInt(hex.slice(1),16),r=(n>>16)&255,g=(n>>8)&255,b=n&255;return `rgb(${Math.round(r+(255-r)*amount)},${Math.round(g+(255-g)*amount)},${Math.round(b+(255-b)*amount)})`;}
+function drawBall(g,x,y,r,level,alpha=1,scale=1){
+      const index=Math.min(level,BALL_TYPES.length-1),baseType=BALL_TYPES[index],custom=customizations[index]||{},type={...baseType,color:custom.color||baseType.color,light:custom.color?mixColor(custom.color,.65):baseType.light};g.save(); g.globalAlpha=alpha;g.translate(x,y);g.scale(scale,scale);g.translate(-x,-y);
+      const icon=customImageCache[index],hasCustomIcon=Boolean(custom.image&&icon?.complete&&icon.naturalWidth),showBase=custom.border!==false||!custom.image;
+      if(showBase){const grad=g.createRadialGradient(x-r*.35,y-r*.48,r*.08,x,y,r*1.12);grad.addColorStop(0,type.light);grad.addColorStop(.68,type.color);grad.addColorStop(1,shade(type.color,-22));
+        g.shadowColor=type.color+'55';g.shadowBlur=Math.max(2,r*.25);g.fillStyle=grad;g.beginPath();g.arc(x,y,r,0,Math.PI*2);g.fill();g.shadowBlur=0;
+        g.strokeStyle='#ffffffcf';g.lineWidth=Math.max(1,r*.075);g.beginPath();g.arc(x,y,r*.965,0,Math.PI*2);g.stroke();
+        g.strokeStyle='#ffffff9c';g.lineWidth=Math.max(1,r*.075);g.beginPath();g.arc(x,y,r*.82,Math.PI*1.12,Math.PI*1.77);g.stroke();
+        g.fillStyle='#ffffffaa';g.beginPath();g.ellipse(x-r*.35,y-r*.43,r*.19,r*.11,-.55,0,Math.PI*2);g.fill();
+      }
+      if(hasCustomIcon){if(showBase){g.save();g.beginPath();g.arc(x,y,r*.8,0,Math.PI*2);g.clip();g.drawImage(icon,x-r*1.04,y-r*1.04,r*2.08,r*2.08);g.restore();}else{g.save();g.shadowColor=type.color+'55';g.shadowBlur=Math.max(2,r*.2);g.drawImage(icon,x-r*1.306,y-r*1.306,r*2.612,r*2.612);g.restore();}}else{g.fillStyle='#fff';g.font=`${Math.max(11,r*.68)}px system-ui`;g.textAlign='center';g.textBaseline='middle';g.fillText(type.emoji,x,y+r*.08);}
+      g.restore();
+    }
+function ballName(level){return customizations[level]?.name?.trim()||BALL_TYPES[level].name;}
+/* ===== 抽取结束 ===== */
+
+const PAD = 40, RADIUS = 26, CONTAINER_COLOR = '#ad9dc7';
+let customizations = withDefaultCustomizations();
+const customImageCache = {};
+
+const stage = document.querySelector('#stage');
+const ctx = stage.getContext('2d');
+const DPR = Math.min(window.devicePixelRatio || 1, 2);
+const state = { width: 620, height: 620, selected: 0, balls: [], drag: null };
+
+function outerW() { return state.width + PAD * 2; }
+function outerH() { return state.height + PAD * 2; }
+function roundRectPath(g, x, y, w, h, r) {
+  g.beginPath();
+  if (typeof g.roundRect === 'function') g.roundRect(x, y, w, h, r);
+  else { g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); }
+}
+function paint(g) {
+  const W = state.width, H = state.height, OW = outerW(), OH = outerH();
+  g.clearRect(0, 0, OW, OH);
+  g.fillStyle = '#fffaf5';
+  g.fillRect(0, 0, OW, OH);
+  const inner = g.createLinearGradient(0, PAD, 0, PAD + H);
+  inner.addColorStop(0, '#f7f1ff'); inner.addColorStop(1, '#fff4f7');
+  roundRectPath(g, PAD, PAD, W, H, RADIUS);
+  g.fillStyle = inner; g.fill();
+  g.save();
+  roundRectPath(g, PAD, PAD, W, H, RADIUS); g.clip();
+  state.balls.forEach(ball => drawBall(g, ball.x, ball.y, ball.r, ball.level, 1, 1));
+  g.restore();
+  roundRectPath(g, PAD, PAD, W, H, RADIUS);
+  g.lineWidth = 7; g.strokeStyle = CONTAINER_COLOR; g.stroke();
+}
+function render() {
+  stage.width = Math.round(outerW() * DPR);
+  stage.height = Math.round(outerH() * DPR);
+  stage.style.width = outerW() + 'px';
+  stage.style.height = outerH() + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  paint(ctx);
+  updateState();
+}
+function updateState() {
+  const area = state.balls.reduce((sum, ball) => sum + Math.PI * ball.r * ball.r, 0) / (state.width * state.height);
+  document.querySelector('#state').textContent = '已放置 ' + state.balls.length + ' 颗 ｜ 填充率 ' + Math.round(area * 100) + '%';
+}
+function toLocal(event) {
+  const rect = stage.getBoundingClientRect();
+  return { x: (event.clientX - rect.left) * (outerW() / rect.width), y: (event.clientY - rect.top) * (outerH() / rect.height) };
+}
+function clampToContainer(x, y) {
+  return { x: Math.max(PAD, Math.min(PAD + state.width, x)), y: Math.max(PAD, Math.min(PAD + state.height, y)) };
+}
+function hitTest(point) {
+  for (let i = state.balls.length - 1; i >= 0; i--) {
+    const ball = state.balls[i];
+    if (Math.hypot(ball.x - point.x, ball.y - point.y) <= ball.r) return i;
+  }
+  return -1;
+}
+function place(point) {
+  const level = state.selected, r = radiusFor(level);
+  const p = clampToContainer(point.x, point.y);
+  state.balls.push({ level, r, x: p.x, y: p.y });
+  render();
+}
+stage.addEventListener('pointerdown', event => {
+  const point = toLocal(event);
+  if (event.button === 2) {
+    const index = hitTest(point);
+    if (index >= 0) { state.balls.splice(index, 1); render(); }
+    return;
+  }
+  if (event.button !== 0) return;
+  const index = hitTest(point);
+  if (index >= 0) {
+    state.drag = { index, dx: state.balls[index].x - point.x, dy: state.balls[index].y - point.y };
+    stage.setPointerCapture(event.pointerId);
+  } else place(point);
+});
+stage.addEventListener('pointermove', event => {
+  if (!state.drag) return;
+  const ball = state.balls[state.drag.index];
+  const point = clampToContainer(toLocal(event).x + state.drag.dx, toLocal(event).y + state.drag.dy);
+  ball.x = point.x; ball.y = point.y;
+  render();
+});
+stage.addEventListener('pointerup', () => { state.drag = null; });
+stage.addEventListener('pointercancel', () => { state.drag = null; });
+stage.addEventListener('contextmenu', event => event.preventDefault());
+
+function buildPalette() {
+  const box = document.querySelector('#palette');
+  box.replaceChildren();
+  BALL_TYPES.forEach((type, level) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'ball-btn' + (level === state.selected ? ' selected' : '');
+    button.dataset.level = level;
+    const mini = document.createElement('canvas');
+    const size = 40;
+    mini.width = size * DPR; mini.height = size * DPR;
+    mini.style.width = size + 'px'; mini.style.height = size + 'px';
+    const g = mini.getContext('2d');
+    g.setTransform(DPR, 0, 0, DPR, 0, 0);
+    drawBall(g, size / 2, size / 2, 16, level, 1, 1);
+    const name = document.createElement('b');
+    name.textContent = 'L' + (level + 1) + ' ' + (ballName(level) || type.name || '');
+    const radius = document.createElement('i');
+    radius.textContent = 'r=' + radiusFor(level);
+    button.append(mini, name, radius);
+    button.addEventListener('click', () => {
+      state.selected = level;
+      box.querySelectorAll('.ball-btn').forEach(item => item.classList.toggle('selected', Number(item.dataset.level) === level));
+    });
+    box.append(button);
+  });
+}
+
+function setSize(width, height) {
+  const w = Math.max(240, Math.min(1200, Math.round(Number(width) || 620)));
+  const h = Math.max(240, Math.min(1200, Math.round(Number(height) || 620)));
+  state.width = w; state.height = h;
+  document.querySelector('#size-range-w').value = w;
+  document.querySelector('#size-number-w').value = w;
+  document.querySelector('#size-range-h').value = h;
+  document.querySelector('#size-number-h').value = h;
+  state.balls.forEach(ball => { const p = clampToContainer(ball.x, ball.y); ball.x = p.x; ball.y = p.y; });
+  render();
+}
+document.querySelector('#size-range-w').addEventListener('input', event => setSize(event.target.value, state.height));
+document.querySelector('#size-number-w').addEventListener('change', event => setSize(event.target.value, state.height));
+document.querySelector('#size-range-h').addEventListener('input', event => setSize(state.width, event.target.value));
+document.querySelector('#size-number-h').addEventListener('change', event => setSize(state.width, event.target.value));
+document.querySelector('#btn-undo').addEventListener('click', () => { state.balls.pop(); render(); });
+document.querySelector('#btn-clear').addEventListener('click', () => { state.balls.length = 0; render(); });
+document.querySelector('#btn-random').addEventListener('click', () => {
+  document.querySelector('#state').textContent = '堆放中…（模拟物理堆积）';
+  setTimeout(randomFill, 30);
+});
+function randomFill() {
+  state.balls.length = 0;
+  const W = state.width, H = state.height, L = PAD, R = PAD + W, T = PAD, B = PAD + H;
+  const G = 1450, REST = .29, WALL = .22, FRICTION = .994;
+  const pickLevel = () => {
+    const u = Math.random();
+    if (u < .55) return Math.floor(Math.random() * 3);
+    if (u < .80) return 3 + Math.floor(Math.random() * 3);
+    if (u < .95) return 6 + Math.floor(Math.random() * 4);
+    return 10 + Math.floor(Math.random() * 5);
+  };
+  // 按容器面积分配球数：目标约占容器面积 80%（装满但不撑爆，任何尺寸都自然）
+  const budget = W * H * 0.8;
+  let used = 0, guard = 0;
+  while (used < budget && guard < 800) {
+    guard += 1;
+    const level = pickLevel(), r = radiusFor(level);
+    if (r * 2 > Math.min(W, H) * 0.98) continue;
+    const area = Math.PI * r * r;
+    if (used + area > budget) continue;
+    used += area;
+    state.balls.push({ level, r, x: L + r + Math.random() * Math.max(0, W - r * 2), y: T - r - Math.random() * H, vx: (Math.random() - .5) * 60, vy: 0 });
+  }
+  const step = 1 / 120;
+  for (let pass = 0; pass < 2; pass++) {
+    const steps = pass === 0 ? 900 : 400, iterations = pass === 0 ? 1 : 2;
+    for (let it = 0; it < steps; it++) {
+      for (const b of state.balls) {
+        b.vy += G * step; b.vx *= FRICTION; b.vy *= FRICTION;
+        b.x += b.vx * step; b.y += b.vy * step;
+        if (b.x - b.r < L) { b.x = L + b.r; b.vx = Math.abs(b.vx) * WALL; }
+        if (b.x + b.r > R) { b.x = R - b.r; b.vx = -Math.abs(b.vx) * WALL; }
+        if (b.y + b.r > B) { b.y = B - b.r; b.vy = -Math.abs(b.vy) * REST; }
+      }
+      for (let n = 0; n < iterations; n++) {
+        for (let i = 0; i < state.balls.length; i++) {
+          const a = state.balls[i];
+          for (let j = i + 1; j < state.balls.length; j++) {
+            const b = state.balls[j];
+            const dx = b.x - a.x, dy = b.y - a.y, d = Math.hypot(dx, dy), min = a.r + b.r;
+            if (d < min && d > .0001) {
+              const ov = (min - d) / 2, nx = dx / d, ny = dy / d;
+              a.x -= nx * ov; a.y -= ny * ov; b.x += nx * ov; b.y += ny * ov;
+              const vn = (b.vx - a.vx) * nx + (b.vy - a.vy) * ny;
+              if (vn < 0) { const imp = -(1 + REST) * vn / 2; a.vx -= imp * nx; a.vy -= imp * ny; b.vx += imp * nx; b.vy += imp * ny; }
+            }
+          }
+        }
+      }
+    }
+    if (pass === 0) for (let k = state.balls.length - 1; k >= 0; k--) if (state.balls[k].y - state.balls[k].r < T - 1) state.balls.splice(k, 1);
+  }
+  render();
+}
+document.querySelector('#btn-export').addEventListener('click', () => {
+  const OW = outerW(), OH = outerH(), SCALE = 2;
+  const buffer = document.createElement('canvas');
+  buffer.width = Math.round(OW * SCALE); buffer.height = Math.round(OH * SCALE);
+  const g = buffer.getContext('2d');
+  g.setTransform(SCALE, 0, 0, SCALE, 0, 0);
+  paint(g);
+  const link = document.createElement('a');
+  link.download = '球堆放-' + state.width + 'x' + state.height + '-' + state.balls.length + '颗.png';
+  link.href = buffer.toDataURL('image/png');
+  link.click();
+});
+
+buildPalette();
+render();
+</script>
+</body>
+</html>
